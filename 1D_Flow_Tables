@@ -1,0 +1,515 @@
+### Gas Dynamics 510000 --------------------------------- ###
+### Purdue University ----------------------------------- ###
+### Script developed by: Russell Lundius, B.S.M.E ------- ###
+### Script created: 2/7/2022 ---------------------------- ###
+
+
+
+
+
+
+###     IMPORTS     #########################################
+#############################################################
+import scipy.interpolate as scint
+import matplotlib.pyplot as plt
+from PyQt5.QtWidgets import *
+from PyQt5.QtCore import *
+from PyQt5.QtGui import *
+import pandas as pd
+import numpy as np
+import math as m
+import sys
+#############################################################
+#############################################################
+
+
+
+
+
+
+###     TABULATED DATA      #################################
+#############################################################
+class Tables():
+    """
+    Object for interfacing with the tabulated CSV data.
+    """
+
+
+
+    def __init__(self):
+        """
+        Initialize Tables().
+        """
+
+        ###     INITIALIZE TABULATED DATA   ###
+        self.colors = ['red', 'red', 'blue', 'green', 'pink', 'black']
+        self.data_type = ["Fanno", "Isentropic", "NormalShock", "PrandtlMeyer", "Rayleigh"]
+        self.variables = {"fanno" : ["Ma", "P/P*", "T/T*", "p/p*", "Po/Po*", "4fFL*/DH"],
+                     "isentropic" : ["Ma", "P/Po", "T/To", "p/po", "A/A*"],
+                     "normalshock" : ["Ma1", "Ma2", "P2/P1", "Po2/Po1", "T2/T1", "p2/p1"],
+                     "prandtlmeyer" : ["Ma", "v"],
+                     "rayleigh" : ["Ma", "P/P*", "T/T*", "p/p*", "Po/Po*", "To/To*"]}
+
+        # store CSV files as pandas dataframes
+        for i, v in enumerate(self.variables):
+            exec("self." + v + " = pd.read_csv('" + self.data_type[i] + ".csv')")
+
+
+            
+    def graph(self, table, X, *args):
+        """
+        Create graph of specified data.
+        
+        :param table: specified data table
+        :param X: independent variable
+        :param args: dependent variable(s)
+        """
+
+        # pull independent variable data from specified table
+        data_types = self.variables[table]
+        exec("self.x = " + "self." + table + "['" + X + "']")
+        fig, ax = plt.subplots(dpi = 100)
+
+        # pull dependent variable(s) data from specified table
+        if len(args) > 0 and args[0] != 'ALL': # if dependent variable specified is not 'ALL'
+            exec("self.y_1 = " + "self." + table + "['" + args[0] + "']")
+            ax.plot(self.x, self.y_1, color = self.colors[0], label = args[0])
+        elif args[0] == 'ALL': # if 'ALL' dependent variables are specified
+            self.y = []
+            for i, d in enumerate(data_types):
+                if d == X: # if dependent variable is same as independent
+                    continue
+                else:
+                    exec("self.y_" + str(i + 1) + " = " + "self." + table + "['" + d + "']")
+                    eval("self.y.append(self.y_" + str(i + 1) + ")")
+                    exec("ax.plot(self.x, " + "self.y_" + str(i + 1) + ", color = self.colors[" + str(i) + "], label = data_types[" + str(i) + "])")
+
+        # configure plot and save in directory
+        plt.xlabel(X + ', [-]')
+        plt.ylabel('Value, [-]')
+        plt.legend()
+        plt.savefig('plot.png')
+
+
+
+    def interpolate(self, value):
+        """
+        Interpolate the data given a specified input value.
+        
+        :param value: specified value to be interpolated within dataset
+        """
+
+        # initialize variable values
+        solution_2 = 0
+        solution_1 = 0
+        temp = 0
+        status = False
+
+        # loop through data one value at a time
+        for i in range(len(self.y[1:])):
+            data_x = [self.x[i], self.x[i+1]]
+            data_y = [self.y[i], self.y[i+1]]
+            
+            try: # if an interpolated value can be calculated
+                interp = scint.interp1d(data_x, data_y)
+                solution_1 = float(interp(value))
+                status = True
+                
+                if solution_1 == solution_2: # if interpolated value is the same as before
+                    continue
+                else: # set other solution to temp value
+                    solution_2 = temp
+            except Exception: #if an interpolated value could not be created
+                temp = solution_1 # set temp value back to first solution
+                continue
+            
+        if not status: # if there were no interpolated values discovered
+            raise Exception # raise error
+        else: # if at least one interpolated value was discovered
+            return solution_1, solution_2
+
+
+
+    def calculate(self, table, find, given):
+        """
+        Calculate the solution given the inputs.
+
+        :param table: specified data table
+        :param find: specified dataset to extract the solution from
+        :param given: specified known value from given dataset
+        """
+
+        # extract independent and dependent variable data
+        data_types = self.variables[table]
+        
+        for data, value in given.items():
+            exec("self.x = " + "self." + table + "['" + data + "']") # independent variable
+            exec("self.y = " + "self." + table + "['" + find + "']") # dependent variable
+
+            try: # if a solution can be extracted without error
+                solution_1, solution_2 = self.interpolate(value)
+                if solution_1 == solution_2:
+                    return f"{solution_1:.5f}", ""
+                else:
+                    if abs((solution_1 - solution_2)/solution_1) <= 0.03:
+                        interpolate = scint.interp1d(self.x, self.y)
+                        solution_1 = interpolate(value)
+                        return f"{solution_1:.5f}", ""
+                    else:
+                        return f"{solution_1:.5f}", f"{solution_2:.5f}"
+            except Exception: # either a value couldn't be found or there was an invalid input
+                return
+
+
+
+
+
+
+###     APPLICATION      ####################################
+#############################################################
+class MainWindow(QMainWindow):
+    """
+    Main window widget for the GUI.
+    """
+
+
+    
+    def __init__(self):
+        """
+        Initialize MainWindow().
+        """
+        
+        ###     SET UP      ###
+        super(MainWindow, self).__init__()
+        self.setWindowTitle("Gas Dynamics")
+        self.setFixedSize(QSize(1160, 520))
+        self.setStyleSheet("background-color : rgb(200, 200, 200);")
+        self.title_font = QFont("Calibri", 22)
+        self.base_font = QFont("Calibri", 14)
+        self.GD = Tables()
+
+        ###     TABLES      ###
+        self.current_table = 'fanno'
+        self.table_label = QLabel("Tables", self)
+        self.table_label.setFont(self.title_font)
+        self.table_label.move(20, 15)
+        self.button_style = """.setStyleSheet("QPushButton"
+                                   "{"
+                                   "background : solid white;"
+                                   "}"
+                                   "QPushButton::hover"
+                                   "{"
+                                   "border : 4px solid gray;"
+                                   "}"
+                                   "QPushButton::checked"
+                                   "{"
+                                   "background : solid white;"
+                                   "border : 4px solid blue;"
+                                   "}")"""
+
+        # fanno data table
+        self.fanno_table = QPushButton("Fanno", self)
+        self.fanno_table.setFont(self.base_font)
+        self.fanno_table.setCheckable(True)
+        self.fanno_table.setChecked(True)
+        self.fanno_table.clicked.connect(lambda ch, table = 'fanno', func = self.newCurrentTable : func(table))
+        self.fanno_table.clicked.connect(self.reset)
+        self.fanno_table.resize(120, 40)
+        self.fanno_table.move(20, 80)
+
+        # isentropic data table
+        self.isentropic_table = QPushButton("Isentropic", self)
+        self.isentropic_table.setFont(self.base_font)
+        self.isentropic_table.setCheckable(True)
+        self.isentropic_table.clicked.connect(lambda ch, table = 'isentropic', func = self.newCurrentTable : func(table))
+        self.isentropic_table.clicked.connect(self.reset)
+        self.isentropic_table.resize(120, 40)
+        self.isentropic_table.move(20, 140)
+
+        # normal shock data table
+        self.normalshock_table = QPushButton("Normal Shock", self)
+        self.normalshock_table.setFont(self.base_font)
+        self.normalshock_table.setCheckable(True)
+        self.normalshock_table.clicked.connect(lambda ch, table = 'normalshock', func = self.newCurrentTable : func(table))
+        self.normalshock_table.clicked.connect(self.reset)
+        self.normalshock_table.resize(120, 40)
+        self.normalshock_table.move(20, 200)
+
+        # prandtlmeyer data table
+        self.prandtlmeyer_table = QPushButton("Prandtl Meyer", self)
+        self.prandtlmeyer_table.setFont(self.base_font)
+        self.prandtlmeyer_table.setCheckable(True)
+        self.prandtlmeyer_table.clicked.connect(lambda ch, table = 'prandtlmeyer', func = self.newCurrentTable : func(table))
+        self.prandtlmeyer_table.clicked.connect(self.reset)
+        self.prandtlmeyer_table.resize(120, 40)
+        self.prandtlmeyer_table.move(20, 260)
+
+        # rayleigh data table
+        self.rayleigh_table = QPushButton("Rayleigh", self)
+        self.rayleigh_table.setFont(self.base_font)
+        self.rayleigh_table.setCheckable(True)
+        self.rayleigh_table.clicked.connect(lambda ch, table = 'rayleigh', func = self.newCurrentTable : func(table))
+        self.rayleigh_table.clicked.connect(self.reset)
+        self.rayleigh_table.resize(120, 40)
+        self.rayleigh_table.move(20, 320)
+
+        # create data table button group
+        self.tables_group = QButtonGroup(self)
+        self.tables_group.setExclusive(True)
+        self.tables_group.addButton(self.fanno_table)
+        self.tables_group.addButton(self.isentropic_table)
+        self.tables_group.addButton(self.normalshock_table)
+        self.tables_group.addButton(self.prandtlmeyer_table)
+        self.tables_group.addButton(self.rayleigh_table)
+
+        eval("self.fanno_table" + self.button_style)
+        eval("self.isentropic_table" + self.button_style)
+        eval("self.normalshock_table" + self.button_style)
+        eval("self.prandtlmeyer_table" + self.button_style)
+        eval("self.rayleigh_table" + self.button_style)
+
+        ###     INPUT DATA     ###
+        self.calc_label = QLabel("Calculate", self)
+        self.calc_label.setFont(self.title_font)
+        self.calc_label.move(200, 15)
+        self.calc_label.resize(150, 30)
+
+        self.given_label = QLabel("Given Value", self)
+        self.given_label.setFont(self.base_font)
+        self.given_label.move(350, 50)
+
+        # specify given data type
+        self.given_type = QComboBox(self)
+        self.given_type.insertItems(0, self.GD.variables[self.current_table])
+        self.given_type.setFont(self.base_font)
+        self.given_type.resize(120, 40)
+        self.given_type.move(200, 80)
+        self.given_type.setStyleSheet("QComboBox"
+                                      "{"
+                                      "background-color : solid white;"
+                                      "}")
+
+        # specify given data value
+        self.given_value = QLineEdit(self)
+        self.given_value.insert('1.00')
+        self.given_value.setFont(self.base_font)
+        self.given_value.resize(120, 40)
+        self.given_value.move(350, 80)
+        self.given_value.setStyleSheet("QLineEdit"
+                                      "{"
+                                      "background-color : solid white;"
+                                      "}")
+
+        self.find_label = QLabel("Value(s)", self)
+        self.find_label.setFont(self.base_font)
+        self.find_label.move(350, 170)
+
+        # specify data type to be calculated
+        self.find_type = QComboBox(self)
+        self.find_type.insertItems(0, self.GD.variables[self.current_table])
+        self.find_type.setFont(self.base_font)
+        self.find_type.resize(120, 40)
+        self.find_type.move(200, 200)
+        self.find_type.setStyleSheet("QComboBox"
+                                      "{"
+                                      "background-color : solid white;"
+                                      "}")
+
+        # display solution
+        self.solution_1 = QLineEdit(self)
+        self.solution_1.setFont(self.base_font)
+        self.solution_1.resize(120, 40)
+        self.solution_1.move(350, 200)
+        self.solution_1.setStyleSheet("QLineEdit"
+                                      "{"
+                                      "background-color : solid white;"
+                                      "}")
+
+        # display second solution (if exists), else it's zero
+        self.solution_2 = QLineEdit(self)
+        self.solution_2.setFont(self.base_font)
+        self.solution_2.resize(120, 40)
+        self.solution_2.move(350, 260)
+        self.solution_2.setStyleSheet("QLineEdit"
+                                      "{"
+                                      "background-color : solid white;"
+                                      "}")
+
+        # calculate
+        self.solve = QPushButton("Solve", self)
+        self.solve.setFont(self.base_font)
+        self.solve.resize(120, 40)
+        self.solve.move(200, 140)
+        self.solve.clicked.connect(self.derive)
+        self.solve.setStyleSheet("QPushButton"
+                                 "{"
+                                 "background : solid white;"
+                                 "}"
+                                 "QPushButton::hover"
+                                 "{"
+                                 "border : 4px solid gray;"
+                                 "}"
+                                 "QPushButton::pressed"
+                                 "{"
+                                 "border : 4px solid blue;"
+                                 "}")
+
+        ###     PLOTTING    ###
+        self.plot_label = QLabel("Plot Data", self)
+        self.plot_label.setFont(self.title_font)
+        self.plot_label.resize(150, 30)
+        self.plot_label.move(200, 380)
+
+        self.independent_label = QLabel("Ind. Variable", self)
+        self.independent_label.setFont(self.base_font)
+        self.independent_label.resize(120, 40)
+        self.independent_label.move(200, 430)
+
+        # specify which data type is the independent variable
+        self.independent = QComboBox(self)
+        self.independent.insertItems(0, self.GD.variables[self.current_table])
+        self.independent.setFont(self.base_font)
+        self.independent.resize(120, 40)
+        self.independent.move(200, 460)
+        self.independent.setStyleSheet("QComboBox"
+                                       "{"
+                                       "background-color : solid white;"
+                                       "}")
+
+        self.dependent_label = QLabel("Dep. Variable", self)
+        self.dependent_label.setFont(self.base_font)
+        self.dependent_label.resize(120, 40)
+        self.dependent_label.move(350, 430)
+
+        # specify which data type is the dependent variable
+        self.dependent = QComboBox(self)
+        self.dependent.insertItems(0, self.GD.variables[self.current_table])
+        self.dependent.insertItem(0, 'ALL')
+        self.dependent.setFont(self.base_font)
+        self.dependent.resize(120, 40)
+        self.dependent.move(350, 460)
+        self.dependent.setStyleSheet("QComboBox"
+                                     "{"
+                                     "background-color : solid white;"
+                                     "}")
+
+        # plot
+        self.plot_btn = QPushButton("Plot", self)
+        self.plot_btn.setFont(self.base_font)
+        self.plot_btn.resize(120, 40)
+        self.plot_btn.move(350, 380)
+        self.plot_btn.clicked.connect(self.plot)
+        self.plot_btn.setStyleSheet("QPushButton"
+                                 "{"
+                                 "background : solid white;"
+                                 "}"
+                                 "QPushButton::hover"
+                                 "{"
+                                 "border : 4px solid gray;"
+                                 "}"
+                                 "QPushButton::pressed"
+                                 "{"
+                                 "border : 4px solid blue;"
+                                 "}")
+
+        # initialize an image label for displaying graph
+        self.pixmap = QPixmap('plot.png')
+        self.display = QLabel(self)
+        self.display.setPixmap(self.pixmap)
+        self.display.move(500, 10)
+        self.display.resize(640, 500)
+
+
+
+    def newCurrentTable(self, table):
+        """
+        Update the current table status.
+
+        :param table: specified data table
+        """
+        
+        self.current_table = table
+
+
+
+    def reset(self):
+        """
+        Reset the line edit's and drop-down boxes.
+        """
+        
+        self.given_value.clear()
+        self.given_type.clear()
+        self.given_type.insertItems(0, self.GD.variables[self.current_table])
+        self.find_type.clear()
+        self.find_type.insertItems(0, self.GD.variables[self.current_table])
+
+        self.dependent.clear()
+        self.dependent.insertItems(0, self.GD.variables[self.current_table])
+        self.dependent.insertItem(0, 'ALL')
+
+        self.independent.clear()
+        self.independent.insertItems(0, self.GD.variables[self.current_table])
+
+
+        
+    def derive(self):
+        """
+        Calculation a solution and display the answer.
+        """
+
+        try: # if a solution can be determined
+            # specified datasets
+            find = str(self.find_type.currentText())
+            given = {str(self.given_type.currentText()) : float(self.given_value.text())}
+            values = self.GD.calculate(self.current_table, find, given)
+            self.solution_1.setText(str(values[0]))
+            self.solution_2.setText(str(values[1]))
+
+            # update plot
+            ind_idx = self.given_type.currentIndex()
+            dep_idx = self.find_type.currentIndex()
+            self.independent.setCurrentIndex(ind_idx)
+            self.dependent.setCurrentIndex(dep_idx + 1)
+            self.plot()
+        except Exception: # if a solution could not be found or there was an invalid input
+            error = QMessageBox.about(self, "Error", "Invalid Input")
+            self.solution_1.setText('')
+            self.solution_2.setText('')
+
+
+
+    def plot(self):
+        """
+        Graph the specified datasets and update the image label dispaly.
+        """
+        
+        independent = str(self.independent.currentText())
+        dependent = str(self.dependent.currentText())
+        self.GD.graph(self.current_table, independent, dependent)
+        self.pixmap = QPixmap('plot.png')
+        self.display.setPixmap(self.pixmap)
+
+
+
+
+
+
+###     RUN PROGRAM     #####################################
+#############################################################
+def run():
+    app = QApplication(sys.argv)
+    GasDynamics = MainWindow()
+    GasDynamics.show()
+    sys.exit(app.exec_())
+
+
+
+
+
+
+###     INITIALIZE .PY FILE AS A MODULE      ################
+#############################################################
+if __name__ == '__main__':
+    run()
+    
+
